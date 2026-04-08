@@ -1,0 +1,15 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "@typescript-eslint/no-require-imports": "off",
+    "no-var": "off",
+    "@typescript-eslint/no-unused-vars": ["warn", {
+      "argsIgnorePattern": "^_",
+      "varsIgnorePattern": "^(AdminHeader|StatsOverview|RecentActivityPanel|TopPerformersPanel|StudentHeader|CodeEditor|QuestionPanel|OutputPanel|NavigationControls|SuccessModal|ProgressCard|StatsGrid|RecentActivity|QuickActions|LoginForm|simulatePythonExecution|compareOutputs|questProgress)$"
+    }],
+    "react/jsx-no-undef": "off",
+    "@typescript-eslint/no-explicit-any": "off",
+    "react-hooks/exhaustive-deps": "warn",
+    "prefer-const": "warn"
+  }
+}

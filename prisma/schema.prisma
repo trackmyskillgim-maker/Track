@@ -1,0 +1,341 @@
+// Python Quest Database Schema
+// Optimized for 80-100 concurrent students, free tier hosting
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. Users table (students + admins)
+model User {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  username     String   @unique @db.VarChar(50)
+  email        String   @unique @db.VarChar(255)
+  passwordHash String?  @map("password_hash") @db.VarChar(255)
+  role         UserRole @default(student)
+
+  // Student specific fields
+  rollNumber String? @map("roll_number") @db.VarChar(50)
+  section    String? @db.VarChar(10)
+  department String? @db.VarChar(50)
+
+  // Game progress
+  totalPoints              Int @default(0) @map("total_points")
+  currentLevel             Int @default(1) @map("current_level")
+  currentStreak            Int @default(0) @map("current_streak")
+  maxStreak                Int @default(0) @map("max_streak")
+  consecutiveCorrectStreak Int @default(0) @map("consecutive_correct_streak")
+
+  // Timestamps
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastActive     DateTime  @default(now()) @map("last_active") @db.Timestamptz(6)
+  lastStreakDate DateTime? @map("last_streak_date") @db.Date
+
+  // Status
+  isActive Boolean @default(true) @map("is_active")
+
+  // Relations
+  createdQuests     Quest[]           @relation("QuestCreator")
+  userProgress      UserProgress[]
+  questProgress     QuestProgress[]
+  userAchievements  UserAchievement[]
+  sessions          Session[]
+  attemptLogs       AttemptLog[]
+  updatedSettings   SystemSetting[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  student
+  admin
+
+  @@map("user_role")
+}
+
+// 2. Quests (groups of questions)
+model Quest {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title       String   @db.VarChar(255)
+  description String?
+  orderIndex  Int      @unique @map("order_index")
+
+  // Quest properties
+  difficulty     QuestDifficulty @default(Beginner)
+  subject        String?         @db.VarChar(100)
+  estimatedTime  String?         @map("estimated_time") @db.VarChar(50)
+  totalPoints    Int             @default(0) @map("total_points")
+
+  // Unlock conditions
+  requiredQuestId String? @map("required_quest_id") @db.Uuid
+  requiredQuest   Quest?  @relation("QuestDependency", fields: [requiredQuestId], references: [id])
+  dependentQuests Quest[] @relation("QuestDependency")
+  requiredPoints  Int     @default(0) @map("required_points")
+
+  // Scheduling
+  deadline DateTime? @db.Timestamptz(6)
+
+  // Status
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  createdById    String          @map("created_by") @db.Uuid
+  createdBy      User            @relation("QuestCreator", fields: [createdById], references: [id])
+  questions      Question[]
+  questProgress  QuestProgress[]
+
+  @@map("quests")
+}
+
+enum QuestDifficulty {
+  Beginner
+  Intermediate
+  Advanced
+
+  @@map("quest_difficulty")
+}
+
+// 3. Questions (individual coding challenges)
+model Question {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  questId     String   @map("quest_id") @db.Uuid
+  quest       Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  // Question content
+  title       String @db.VarChar(255)
+  description String
+  task        String
+  starterCode String? @map("starter_code")
+  hint        String?
+
+  // Validation
+  expectedOutput String  @map("expected_output") // Display format for students - actual testing uses test cases
+  functionName   String? @map("function_name") @db.VarChar(100) // Function name that students implement
+  solutionCode   String? @map("solution_code") // Optional reference solution
+
+  // Scoring
+  points           Int @default(10)
+  maxAttempts      Int? @map("max_attempts")
+  timeLimitSeconds Int? @default(300) @map("time_limit_seconds")
+
+  // Organization
+  orderIndex Int                @map("order_index")
+  difficulty QuestionDifficulty @default(Easy)
+  tags       String[]
+
+  // Status
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  userProgress UserProgress[]
+  attemptLogs  AttemptLog[]
+  testCases    QuestionTestCase[]
+
+  @@unique([questId, orderIndex])
+  @@map("questions")
+}
+
+// Question Test Cases (hidden test validation)
+model QuestionTestCase {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  questionId String   @map("question_id") @db.Uuid
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  // AI Test Script (new format)
+  testScript String? @map("test_script")
+
+  // Legacy format (for backward compatibility)
+  input          String  @default("AI_SCRIPT")
+  expectedOutput String  @map("expected_output") @default("AI_SCRIPT_RESULT")
+
+  // Test properties
+  isVisible   Boolean @default(false) @map("is_visible")
+  orderIndex  Int     @map("order_index")
+  description String?
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([questionId, orderIndex])
+  @@map("question_test_cases")
+}
+
+enum QuestionDifficulty {
+  Easy
+  Medium
+  Hard
+
+  @@map("question_difficulty")
+}
+
+// 4. User Progress (tracks completion per question)
+model UserProgress {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId String   @map("question_id") @db.Uuid
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  // Progress tracking
+  completed Boolean @default(false)
+  score     Int     @default(0)
+  attempts  Int     @default(0)
+  bestScore Int     @default(0) @map("best_score")
+
+  // Time tracking
+  totalTimeSeconds Int  @default(0) @map("total_time_seconds")
+  bestTimeSeconds  Int? @map("best_time_seconds")
+
+  // First attempt tracking (for achievements)
+  firstAttemptCorrect Boolean @default(false) @map("first_attempt_correct")
+
+  // Timestamps
+  firstAttemptAt DateTime? @map("first_attempt_at") @db.Timestamptz(6)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, questionId])
+  @@map("user_progress")
+}
+
+// 5. Quest Progress (aggregate progress per quest)
+model QuestProgress {
+  id      String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId  String @map("user_id") @db.Uuid
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questId String @map("quest_id") @db.Uuid
+  quest   Quest  @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  // Progress metrics
+  questionsCompleted   Int     @default(0) @map("questions_completed")
+  totalQuestions       Int     @default(0) @map("total_questions")
+  totalScore           Int     @default(0) @map("total_score")
+  maxPossibleScore     Int     @default(0) @map("max_possible_score")
+  completionPercentage Decimal @default(0) @map("completion_percentage") @db.Decimal(5, 2)
+
+  // Status
+  status     QuestProgressStatus @default(not_started)
+  isUnlocked Boolean             @default(false) @map("is_unlocked")
+
+  // Timestamps
+  startedAt   DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, questId])
+  @@map("quest_progress")
+}
+
+enum QuestProgressStatus {
+  not_started
+  in_progress
+  completed
+
+  @@map("quest_progress_status")
+}
+
+// 6. Achievements (gamification badges)
+model Achievement {
+  id           String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  code         String               @unique @db.VarChar(50)
+  name         String               @db.VarChar(100)
+  description  String?
+  icon         String?              @db.VarChar(10)
+  requirements Json                 @default("{}")
+  points       Int                  @default(0)
+  badgeTier    BadgeTier?           @default(bronze) @map("badge_tier")
+  category     AchievementCategory? @default(quest_completion)
+  isActive     Boolean              @default(true) @map("is_active")
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+enum BadgeTier {
+  bronze
+  silver
+  gold
+  platinum
+
+  @@map("badge_tier")
+}
+
+enum AchievementCategory {
+  quest_completion
+  question_solving
+  accuracy_performance
+  correct_streaks
+  level_milestones
+  subject_mastery
+  special
+
+  @@map("achievement_category")
+}
+
+// 7. User Achievements (tracks earned badges)
+model UserAchievement {
+  id            String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String      @map("achievement_id") @db.Uuid
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  earnedAt      DateTime    @default(now()) @map("earned_at") @db.Timestamptz(6)
+  progressData  Json?       @default("{}") @map("progress_data")
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+// 8. Sessions (authentication and security)
+model Session {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique @map("token_hash") @db.VarChar(255)
+  ipAddress String?  @map("ip_address") @db.Inet
+  userAgent String?  @map("user_agent")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt DateTime @default(now()) @map("last_used_at") @db.Timestamptz(6)
+
+  @@map("sessions")
+}
+
+// 9. Attempt Logs (for debugging and analytics)
+model AttemptLog {
+  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId     String   @map("question_id") @db.Uuid
+  question       Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  attemptNumber  Int      @map("attempt_number")
+  isCorrect      Boolean  @map("is_correct")
+  timeTakenSeconds Int?   @map("time_taken_seconds")
+  errorType      String?  @map("error_type") @db.VarChar(50)
+  submittedAt    DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  @@map("attempt_logs")
+}
+
+// 10. System Settings (admin configurations)
+model SystemSetting {
+  key         String   @id @db.VarChar(100)
+  value       Json
+  description String?
+  updatedById String?  @map("updated_by") @db.Uuid
+  updatedBy   User?    @relation(fields: [updatedById], references: [id])
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_settings")
+}
